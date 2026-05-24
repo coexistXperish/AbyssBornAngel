@@ -1,7 +1,7 @@
 ---
 name: watchers
-description: Poll RSS, JSON APIs, and GitHub with watermark dedup.
-version: 1.0.0
+description: Poll RSS, JSON APIs, GitHub, and X/Twitter with watermark dedup.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos]
@@ -22,6 +22,7 @@ Poll external sources on an interval and react only to new items. Three ready-ma
 - User wants to watch an RSS/Atom feed and be notified of new entries
 - User wants to watch a GitHub repo's issues / pulls / releases / commits
 - User wants to poll an arbitrary JSON endpoint and get notified on new items
+- User wants to watch X/Twitter accounts for new posts (no API key needed)
 - User asks for "a watcher for X" or "notify me when X changes"
 
 ## Mental model
@@ -44,6 +45,7 @@ All three live in `$HERMES_HOME/skills/devops/watchers/scripts/` once the skill 
 | `watch_rss.py` | RSS 2.0 or Atom feed URL | `<guid>` / `<id>` |
 | `watch_http_json.py` | Any JSON endpoint returning a list of objects | Configurable id field |
 | `watch_github.py` | GitHub issues / pulls / releases / commits for a repo | `id` / `sha` |
+| `watch_x.py` | X (Twitter) accounts via nitter RSS or X API v2 | tweet ID |
 
 All three:
 
@@ -98,6 +100,36 @@ Force a replay (next run treated as first poll):
 ```bash
 rm $HERMES_HOME/watcher-state/hn.json
 ```
+
+## Watching X (Twitter) accounts
+
+Watch Nous/Hermes developers for upcoming feature signals — no API key needed:
+
+```bash
+# Watch Nous Research and key devs every 4 hours
+hermes cron create hermes-devwatch \
+  --schedule "0 */4 * * *" --no-agent \
+  --script "$HERMES_HOME/skills/devops/watchers/scripts/watch_x.py" \
+  --script-args "--name nous-devs --handles teknium nousresearch --with-summary"
+```
+
+With a custom nitter instance (if the defaults are rate-limited):
+
+```bash
+--script-args "--name nous-devs --handles teknium --nitter https://nitter.privacydev.net"
+```
+
+With the official X API v2 (requires Bearer token — more reliable but costs money):
+
+```bash
+--script-args "--name nous-devs --handles teknium --x-api-bearer $X_BEARER_TOKEN"
+```
+
+The watcher outputs in the same `## title\nurl\nbody` markdown format as the other
+scripts, so it drops straight into any downstream cron/notification workflow.
+
+**State files**: one per handle, keyed as `<name>-<handle>.json` — so `nous-devs-teknium.json`,
+`nous-devs-nousresearch.json`. Delete them to force a full replay.
 
 ## Writing your own
 

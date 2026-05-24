@@ -488,6 +488,9 @@ memory:
   # For exit/reset, only fires if the session had at least this many user turns.
   flush_min_turns: 6        # Min user turns to trigger flush on exit/reset (0 = disabled)
 
+  # HERMES++: adaptive memory, skill pruning, subagent output contracts (local-first, no extra deps)
+  hermes_plus: true
+
 # =============================================================================
 # Session Reset Policy (Messaging Platforms)
 # =============================================================================

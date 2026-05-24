@@ -274,6 +274,24 @@ def _extract_output_tail(
     return tail
 
 
+def _get_delegation_summary_cap(parent_agent) -> int:
+    """Return the max chars for a subagent summary, or 0 for unlimited.
+
+    Reads HERMES_MAX_DELEGATION_SUMMARY_CHARS from the environment (runtime
+    override) or from parent_agent config at delegation.max_summary_chars.
+    HERMES++ uses this to prevent parent context flooding in driver/worker setups.
+    """
+    import os
+    env_val = os.environ.get("HERMES_MAX_DELEGATION_SUMMARY_CHARS", "")
+    if env_val.isdigit():
+        return int(env_val)
+    try:
+        cfg = getattr(parent_agent, "config", None) or {}
+        return int(cfg.get("delegation", {}).get("max_summary_chars", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _looks_like_error_output(content: str) -> bool:
     """Conservative stderr/error detector for tool-result previews.
 
@@ -1680,6 +1698,13 @@ def _run_single_child(
         _input_tokens = getattr(child, "session_prompt_tokens", 0)
         _output_tokens = getattr(child, "session_completion_tokens", 0)
         _model = getattr(child, "model", None)
+
+        # HERMES++: cap subagent summary before it reaches the parent LLM context.
+        # Controlled by HERMES_MAX_DELEGATION_SUMMARY_CHARS (default: unlimited).
+        # Set e.g. to 2000 in driver/worker setups to prevent context flooding.
+        _summary_cap = _get_delegation_summary_cap(parent_agent)
+        if _summary_cap and len(summary) > _summary_cap:
+            summary = summary[:_summary_cap] + f"\n…[truncated by HERMES++ to {_summary_cap} chars]"
 
         entry: Dict[str, Any] = {
             "task_index": task_index,

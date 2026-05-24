@@ -1142,6 +1142,27 @@ def init_agent(
             _ra().logger.warning("Memory provider plugin init failed: %s", _mpe)
             agent._memory_manager = None
 
+        # HERMES++ local augmentation (opt-in via memory.hermes_plus: true).
+        # Coexists with any external backend; provides subagent output
+        # contracts and the post-session reflection loop.
+        try:
+            if mem_config and mem_config.get("hermes_plus"):
+                from agent.memory_manager import MemoryManager as _MemoryManager
+                from hermes_plus.provider import HermesPlusProvider
+                if agent._memory_manager is None:
+                    agent._memory_manager = _MemoryManager()
+                _hp = HermesPlusProvider()
+                agent._memory_manager.add_provider(_hp)
+                _hp.initialize(
+                    agent.session_id,
+                    platform=platform or "cli",
+                    hermes_home=str(get_hermes_home()),
+                    agent_context="primary",
+                )
+                _ra().logger.info("HERMES++ provider activated")
+        except Exception as _hpe:
+            _ra().logger.warning("HERMES++ provider init failed: %s", _hpe)
+
     # Inject memory provider tool schemas into the tool surface.
     # Skip tools whose names already exist (plugins may register the
     # same tools via ctx.register_tool(), which lands in agent.tools
