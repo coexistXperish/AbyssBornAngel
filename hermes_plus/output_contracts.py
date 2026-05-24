@@ -158,7 +158,7 @@ class OutputContractMemoryHook:
         task: str,
         result: str,
         *,
-        session_id: str = "",
+        child_session_id: str = "",
         **kwargs: Any,
     ) -> None:
         contract = enforce_contract(task, result)
@@ -172,13 +172,13 @@ class OutputContractMemoryHook:
             len(result),
             len(contract.raw_output),
         )
-        self.on_delegation_contract(contract, session_id=session_id, **kwargs)
+        self.on_delegation_contract(contract, child_session_id=child_session_id, **kwargs)
 
     def on_delegation_contract(
         self,
         contract: SubagentResult,
         *,
-        session_id: str = "",
+        child_session_id: str = "",
         **kwargs: Any,
     ) -> None:
         """Override to handle the filtered contract. Default: no-op."""

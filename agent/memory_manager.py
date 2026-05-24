@@ -261,10 +261,14 @@ class MemoryManager:
         Built-in provider (name ``"builtin"``) is always accepted.
         Only **one** external (non-builtin) provider is allowed — a second
         attempt is rejected with a warning.
-        """
-        is_builtin = provider.name == "builtin"
 
-        if not is_builtin:
+        Local-first augmentation providers (``"hermes_plus"``) are exempt
+        from the external limit: they store to local files and do not
+        compete for the single external backend slot.
+        """
+        is_local = provider.name in ("builtin", "hermes_plus")
+
+        if not is_local:
             if self._has_external:
                 existing = next(
                     (p.name for p in self._providers if p.name != "builtin"), "unknown"

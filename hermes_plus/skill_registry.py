@@ -134,6 +134,12 @@ def confidence_score(record: Dict[str, Any], now: Optional[datetime] = None) -> 
     last_used_at: Optional[str] = record.get("last_used_at")
     created_at: Optional[str] = record.get("created_at")
 
+    # A skill we have literally never used has zero confidence, regardless
+    # of how long it has existed. Without this guard, the age component
+    # rescues abandoned skills — the exact ones we want to prune.
+    if use_count <= 0 and not last_used_at:
+        return 0.0
+
     # Frequency: sigmoid centred at 5 uses
     freq = 1.0 / (1.0 + math.exp(-(use_count - 5) / 3.0))
 

@@ -41,51 +41,58 @@ git merge upstream/main
 - `ReflectionMemoryHook` — MemoryProvider mixin; intercepts `on_session_end()`
 - `send_patch_email()` — Mailpit (sandbox) / SMTP (prod) notification
 
-## Integrating into a MemoryProvider
+## Wiring (DONE)
 
-```python
-from hermes_plus.output_contracts import OutputContractMemoryHook
-from hermes_plus.reflection_loop import ReflectionMemoryHook
-from agent.memory_provider import MemoryProvider
+`hermes_plus/provider.py` — `HermesPlusProvider` is the concrete
+`MemoryProvider` that uses both mixins. It is **wired into the agent**:
 
-class HermesPlusProvider(OutputContractMemoryHook, ReflectionMemoryHook, MemoryProvider):
-    @property
-    def name(self): return "hermes_plus"
+- `agent/agent_init.py` registers it when `memory.hermes_plus: true` in config
+  (opt-in, default off). It coexists with any external backend.
+- `agent/memory_manager.py` exempts `"hermes_plus"` from the single-external-
+  provider limit (it's local-first, not a competing backend).
 
-    def is_available(self): return True
-
-    def system_prompt_block(self): return ""
-
-    def prefetch(self, query, *, session_id=""): return ""
-
-    def sync_turn(self, user_content, assistant_content, *, session_id=""): pass
-
-    # Reflection hook
-    def _get_memory_store(self): return {}   # load from Postgres here
-    def _apply_patch(self, patch): pass       # write to Postgres here
-
-    # Contract hook
-    def on_delegation_contract(self, contract, *, session_id="", **kw):
-        # store contract.to_dict() in Postgres
-        pass
+Enable it in `~/.hermes/config.yaml`:
+```yaml
+memory:
+  hermes_plus: true
 ```
+
+## Storage — local-first (NOT Postgres)
+
+Hermes itself is local-first: SQLite (`hermes_state.py`) + JSON files under
+`~/.hermes`. There is no Postgres in the agent/memory/skills layer (the only
+`asyncpg` dep is the Matrix chat gateway). HERMES++ follows suit:
+
+- `hermes_plus_memory.json` — reflection memory + delegation contracts
+- `.skill_registry.json` — skill versions / pins
+
+Postgres/pgvector is only worth adding later if we want semantic recall or
+n8n needs its own backend — a deliberate choice, not a default.
 
 ## Stack
 
 - Orchestration: n8n (Hetzner Docker stack)
-- Memory backend: Postgres (same stack)
-- Confirmation gate: Mailpit sandbox → real SMTP in prod
+- Memory backend: local JSON/SQLite (Postgres optional, later)
+- Confirmation gate: CLI prompt; Mailpit sandbox → real SMTP in prod
 - Env var: `HERMES_REFLECT_AUTO_APPROVE=1` to skip CLI confirmation gate
+
+## Tests
+
+`tests/hermes_plus/` — 37 tests (unit + one end-to-end provider integration).
+Run: `uv run pytest tests/hermes_plus/ -q`
 
 ## Phase 1 checklist
 
 - [x] Skill registry — confidence scoring, TTL prune, merge detection, versioning
 - [x] Output contracts — SubagentResult, enforce_contract, MemoryProvider mixin
 - [x] Reflection loop — session learnings, patch proposals, confirmation gate
+- [x] HermesPlusProvider — concrete provider, wired into agent_init (opt-in)
+- [x] Test suite — 37 tests, wired into CI via tests/hermes_plus/
 - [x] CLAUDE.md
-- [ ] Postgres-backed MemoryProvider implementation
 - [ ] n8n webhook trigger for reflection gate
 - [ ] Benchmark harness (stock Hermes vs Hermes++ over 10 sessions)
+- [ ] X.com watcher for Nous/Hermes devs (intel feed)
+- [ ] (parked) desktop widget for Option A/B upstream decisions
 
 ## Upstream conflict workflow (future)
 
