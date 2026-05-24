@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 MAX_SUMMARY_CHARS = 2_000
 AUTO_APPROVE_ENV = "HERMES_REFLECT_AUTO_APPROVE"
+WEBHOOK_URL_ENV = "HERMES_REFLECT_WEBHOOK_URL"
+EMAIL_TO_ENV = "HERMES_REFLECT_EMAIL_TO"
+SMTP_HOST_ENV = "HERMES_SMTP_HOST"
 
 
 # ---------------------------------------------------------------------------
@@ -182,11 +185,54 @@ def _derive_key(text: str) -> str:
 # Confirmation gate
 # ---------------------------------------------------------------------------
 
-def confirm_patches(patches: List[MemoryPatch]) -> List[MemoryPatch]:
+def send_patch_webhook(
+    patches: List[MemoryPatch],
+    *,
+    webhook_url: str,
+    session_id: str = "",
+) -> None:
+    """POST a patch summary to webhook_url as JSON.
+
+    Uses urllib.request (stdlib only). Logs a warning on failure; does not raise.
+    """
+    import urllib.request
+
+    payload = json.dumps({
+        "patches": [p.to_dict() for p in patches],
+        "session_id": session_id,
+        "count": len(patches),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        logger.info(
+            "reflection_loop: webhook notified (%d patches) → %s",
+            len(patches),
+            webhook_url,
+        )
+    except OSError as e:
+        logger.warning("reflection_loop: webhook notification failed: %s", e)
+
+
+def confirm_patches(
+    patches: List[MemoryPatch],
+    *,
+    session_id: str = "",
+) -> List[MemoryPatch]:
     """Present patches to the user and return approved ones.
 
-    Checks HERMES_REFLECT_AUTO_APPROVE env var. If set to '1', approves all.
-    Otherwise prompts via stdout/stdin (suitable for CLI/sandbox).
+    Priority order:
+    1. HERMES_REFLECT_AUTO_APPROVE=1  → approve all immediately.
+    2. HERMES_REFLECT_WEBHOOK_URL set → fire webhook, then auto-approve.
+    3. HERMES_REFLECT_EMAIL_TO + HERMES_SMTP_HOST set → send email, then auto-approve.
+    4. Neither → fall back to interactive CLI gate.
     """
     if not patches:
         return []
@@ -195,6 +241,26 @@ def confirm_patches(patches: List[MemoryPatch]) -> List[MemoryPatch]:
         logger.info("reflection_loop: auto-approving %d patches", len(patches))
         return patches
 
+    webhook_url = os.environ.get(WEBHOOK_URL_ENV, "")
+    if webhook_url:
+        send_patch_webhook(patches, webhook_url=webhook_url, session_id=session_id)
+        logger.info(
+            "reflection_loop: webhook notified — auto-approving %d patches",
+            len(patches),
+        )
+        return patches
+
+    email_to = os.environ.get(EMAIL_TO_ENV, "")
+    smtp_host = os.environ.get(SMTP_HOST_ENV, "")
+    if email_to and smtp_host:
+        send_patch_email(patches, to=email_to, smtp_host=smtp_host)
+        logger.info(
+            "reflection_loop: email notified — auto-approving %d patches",
+            len(patches),
+        )
+        return patches
+
+    # CLI gate (fallback)
     approved: List[MemoryPatch] = []
     print("\n=== HERMES++ Memory Reflection ===")
     print(f"{len(patches)} proposed memory patch(es):\n")
@@ -226,7 +292,12 @@ class ReflectionMemoryHook:
     Providers must implement _get_memory_store() and _apply_patch().
     """
 
-    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+    def on_session_end(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        session_id: str = "",
+    ) -> None:
         try:
             reflection = extract_session_learnings(messages)
             if not reflection.session_summary and not reflection.learned:
@@ -239,7 +310,7 @@ class ReflectionMemoryHook:
                 logger.debug("reflection_loop: no patches proposed")
                 return
 
-            approved = confirm_patches(patches)
+            approved = confirm_patches(patches, session_id=session_id)
             for patch in approved:
                 try:
                     self._apply_patch(patch)

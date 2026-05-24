@@ -141,6 +141,11 @@ class HermesPlusProvider(OutputContractMemoryHook, ReflectionMemoryHook, MemoryP
             self._save_store(data)
         logger.debug("hermes_plus: applied patch %s %s", patch.action, patch.key)
 
+    # -- Problem 3: session_end with session_id forwarding -------------------
+
+    def on_session_end(self, messages, **kwargs) -> None:  # type: ignore[override]
+        super().on_session_end(messages, session_id=self._session_id, **kwargs)
+
     # -- Optional recall: surface latest summary back into context -----------
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
