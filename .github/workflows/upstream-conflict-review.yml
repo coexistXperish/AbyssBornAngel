@@ -1,0 +1,132 @@
+name: Upstream Conflict Review
+
+# Triggered manually or by a push to upstream/tracking.
+# Compares upstream/tracking against main, asks Copilot to summarise the diff,
+# then opens a GitHub issue with the summary so you can decide what to merge.
+# Claude Code (running via a session trigger) handles the actual merge once
+# you reply to the issue.
+
+on:
+  push:
+    branches:
+      - upstream/tracking
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: "Branch to compare against (default: main)"
+        required: false
+        default: main
+
+jobs:
+  review:
+    name: Summarise upstream diff
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git || true
+          git fetch upstream main
+          git fetch origin main
+
+      - name: Compute diff stats
+        id: diff
+        run: |
+          BASE="${{ github.event.inputs.base_branch || 'main' }}"
+          STATS=$(git diff --stat origin/${BASE}...upstream/main | tail -1)
+          FILES=$(git diff --name-only origin/${BASE}...upstream/main | wc -l)
+          echo "stats=${STATS}" >> "$GITHUB_OUTPUT"
+          echo "file_count=${FILES}" >> "$GITHUB_OUTPUT"
+
+          # Full diff (capped at 20 000 chars to stay within issue body limits)
+          DIFF=$(git diff origin/${BASE}...upstream/main | head -c 20000)
+          # Write to a temp file so the next step can read it
+          printf '%s' "$DIFF" > /tmp/upstream.diff
+
+      - name: Request Copilot summary
+        id: copilot
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('/tmp/upstream.diff', 'utf8');
+            const stats = '${{ steps.diff.outputs.stats }}';
+            const fileCount = '${{ steps.diff.outputs.file_count }}';
+
+            // Ask Copilot via the Copilot review endpoint
+            const prompt = [
+              `You are reviewing an upstream diff for the HERMES++ project.`,
+              ``,
+              `The diff is between \`origin/main\` (our fork) and \`upstream/main\` (NousResearch/hermes-agent).`,
+              ``,
+              `Summary stats: ${stats} (${fileCount} files changed)`,
+              ``,
+              `For each changed file, in 1-2 sentences describe what changed and whether it conflicts`,
+              `with hermes_plus/ additions (skill_registry.py, output_contracts.py, reflection_loop.py).`,
+              ``,
+              `Then output TWO merge options:`,
+              `  Option A: merge all upstream changes (describe risk)`,
+              `  Option B: cherry-pick only safe, non-conflicting files (list them)`,
+              ``,
+              `Diff (may be truncated):`,
+              '```diff',
+              diff.slice(0, 15000),
+              '```',
+            ].join('\n');
+
+            // Post as a new issue so the owner gets a notification
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[upstream] New upstream changes available — ${stats}`,
+              body: [
+                `## Upstream changes detected`,
+                ``,
+                `**Stats:** ${stats} across ${fileCount} files`,
+                `**Source:** \`upstream/tracking\` ← \`NousResearch/hermes-agent:main\``,
+                ``,
+                `---`,
+                ``,
+                `*Copilot is summarising the diff below. Reply with **Option A** or **Option B**`,
+                `and Claude Code will handle the merge and open a PR.*`,
+                ``,
+                `<!-- copilot-review-requested -->`,
+                ``,
+                `<details><summary>Diff (truncated)</summary>`,
+                ``,
+                '```diff',
+                diff.slice(0, 10000),
+                '```',
+                `</details>`,
+              ].join('\n'),
+              labels: ['upstream-sync', 'needs-decision'],
+            });
+
+            core.setOutput('issue_number', issue.data.number);
+            core.setOutput('issue_url', issue.data.html_url);
+            console.log(`Created issue #${issue.data.number}: ${issue.data.html_url}`);
+
+      - name: Request Copilot review on issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = parseInt('${{ steps.copilot.outputs.issue_number }}');
+            if (!issueNumber) { console.log('No issue created, skipping.'); return; }
+
+            // Add copilot review request as a comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: '@github-copilot Please summarise this upstream diff and list which files are safe to merge without conflicting with the hermes_plus/ additions (skill_registry.py, output_contracts.py, reflection_loop.py). Then propose Option A (full merge) and Option B (safe-only cherry-pick).',
+            });
+            console.log(`Copilot review requested on issue #${issueNumber}`);
